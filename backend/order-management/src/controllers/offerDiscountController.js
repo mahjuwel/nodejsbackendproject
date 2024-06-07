@@ -344,39 +344,44 @@ const deleteDiscountById = async (req, res, next) => {
     }
 
 }
+
 const getOfferQtyValueSum = async (req, res, next) => {
     try {
       const { skuName, offerStartDate, offerEndDate } = req.body;
+     
   
       // Define the aggregation pipeline
       const pipeline = [
         {
           $match: {
             skuName: skuName,
-            offerStartDate: { $gte: new Date(offerStartDate) },
-            offerEndDate: { $lte: new Date(offerEndDate) }
+            // Uncomment and modify the following lines if you need to filter by date range
+            offerStartDate: { $gte: offerStartDate },
+            offerEndDate: { $lte: offerEndDate }
           }
         },
         {
           $group: {
             _id: null,
-            offerPc: { $sum: '$offerPc' }
+            totalQuantity: { $sum: '$offerPc' }
           }
         }
       ];
   
       // Run the aggregation
       const offerSumData = await Order.aggregate(pipeline);
+      console.log(offerSumData);
   
       return successResponse(res, {
         statusCode: 200,
         message: 'Offer Sum value is returned successfully',
-        payload: { offerSumData }
+        payload: { offerSumData: offerSumData.length > 0 ? offerSumData[0].totalQuantity : 0 }
       });
     } catch (error) {
       next(error);
     }
   };
+  
 
 module.exports = {
     createOffer,
