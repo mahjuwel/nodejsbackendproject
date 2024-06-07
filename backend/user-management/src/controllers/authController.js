@@ -4,41 +4,82 @@ const { successResponse } = require('./responseController');
 // const { findWithId } = require('../services/findItem');
 const jwt= require('jsonwebtoken');
 // const bcrypt = require('bcryptjs');
+const { promisify } = require('util');
 const { jwtAccessKey} = require('../secret');
 const Distributor = require('../models/dealerModel');
+const redis = require('redis');
 
 
-const handleLogin= async(req, res, next) =>{
-try {
- const {userId, password} = req.body;
- 
-
- const user = await User.findOne({userId, password});
- if(!user){
- throw createError(404," Your ID or Password is wrong! Please try again");
- }
-
- if(user.isBanned){
-    throw createError(403,"You are banned. Please contact the administrator");
- }
-
-
- const userWithoutPassword= await User.findOne({userId}).select("-password");
- return successResponse(res,{
-    statusCode:200,
-    message: 'Loggedin successfully',    
-    payload: {token:jwt.sign({
-      data: userWithoutPassword
-    }, jwtAccessKey, { expiresIn: '24h' })},
-   
-
+// Create Redis client
+const redisClient = redis.createClient({
+  host: '127.0.0.1',
+  port: 6379
 });
 
-} catch (error) {
- next(error); 
-}
-}
+redisClient.on('connect', () => {
+  console.log('Connected to Redis');
+});
 
+redisClient.on('ready', () => {
+  console.log('Redis client ready');
+});
+
+redisClient.on('error', (err) => {
+  console.error('Redis error:', err);
+});
+
+redisClient.on('end', () => {
+  console.log('Redis connection closed');
+});
+
+const getAsync = promisify(redisClient.get).bind(redisClient);
+const setAsync = promisify(redisClient.set).bind(redisClient);
+
+const handleLogin = async (req, res, next) => {
+  try {
+    const { userId, password } = req.body;
+    
+    if (!redisClient.isOpen) {
+      await redisClient.connect();
+    }
+    
+    // Check if user data exists in Redis cache
+    const cachedUser = await redisClient.get(`user:${userId}`);
+    console.log('cache user: ',cachedUser);
+    
+    let user;
+    if (cachedUser) {
+      user = JSON.parse(cachedUser);
+    } else {
+      // Fetch user from database
+      user = await User.findOne({ userId, password });
+      
+      if (!user) {
+        throw createError(404, "Your ID or Password is wrong! Please try again");
+      }
+
+      // Cache the user data in Redis
+      redisClient.set(`user:${userId}`, JSON.stringify(user), 'EX', 3600); // Cache for 1 hour
+    }
+
+    if (user.isBanned) {
+      throw createError(403, "You are banned. Please contact the administrator");
+    }
+
+    const userWithoutPassword = await User.findOne({ userId }).select("-password");
+
+    return successResponse(res, {
+      statusCode: 200,
+      message: 'Logged in successfully',
+      payload: {
+        token: jwt.sign({ data: userWithoutPassword }, jwtAccessKey, { expiresIn: '24h' })
+      }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+}
 
 const DBHandleLogin= async(req, res, next) =>{
    try {
